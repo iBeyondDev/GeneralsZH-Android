@@ -20,8 +20,8 @@ the Android work sits on top of its iOS port and the community projects credited
 | 1. Engine, DXVK, SDL3, OpenAL compile for Android arm64 | ✅ |
 | 2. APK installs and launches | ✅ |
 | 3. Main menu renders (animated background, ~30 fps on a Snapdragon phone) | ✅ |
-| 4. Skirmish playable with touch controls | 🔜 next |
-| 5. Campaign, Generals Challenge, polished touch controls | ⏳ |
+| 4. Skirmish playable: select, move and command units by touch | ✅ |
+| 5. Campaign, Generals Challenge, polished touch controls | 🔜 next |
 
 <img src="docs/android/loading.jpg" alt="Loading screen" width="345" /> <img src="docs/android/lan-lobby.jpg" alt="LAN lobby screen" width="345" />
 
@@ -36,7 +36,7 @@ works best; Mali and PowerVR GPUs may show glitches).
    `.exe`/`.dll` files and the `Manuals`, `MSS`, `RedistInstallers` and `_CommonRedist` folders.
 3. Open the app and allow **"All files access"** when asked, so it can read that folder.
 
-It currently gets to the menus. Skirmish is the next milestone, so expect bugs.
+Skirmish works: you can select, move and command units by touch. It's still early, so expect bugs.
 
 ## Building from source
 
