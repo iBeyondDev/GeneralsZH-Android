@@ -278,6 +278,40 @@
             "environment": {
                 "PKG_CONFIG_PATH": ""
             }
+        },
+        {
+            "name": "android-arm64",
+            "displayName": "Android arm64-v8a (DXVK + system Vulkan + SDL3 + OpenAL)",
+            "inherits": "default-vcpkg",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "description": "Android port: arm64-v8a libmain.so for SDLActivity, DXVK cross-built with Meson, deps from vcpkg arm64-android. Requires ANDROID_NDK_HOME (r27+) and VCPKG_ROOT (source ~/android/env.sh).",
+            "cacheVariables": {
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "VCPKG_TARGET_TRIPLET": "arm64-android",
+                "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "$env{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake",
+                "ANDROID_ABI": "arm64-v8a",
+                "ANDROID_PLATFORM": "android-29",
+                "ANDROID_STL": "c++_static",
+                "ANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES": "ON",
+                "SAGE_USE_DX8": "OFF",
+                "SAGE_USE_SDL3": "ON",
+                "SAGE_USE_OPENAL": "ON",
+                "SAGE_USE_GLM": "ON",
+                "SAGE_UPDATE_CHECK": "OFF",
+                "RTS_CRASHDUMP_ENABLE": "OFF",
+                "RTS_BUILD_OPTION_FFMPEG": "ON",
+                "RTS_BUILD_OPTION_SAGE_PATCH": "OFF",
+                "RTS_BUILD_GENERALS": "OFF",
+                "RTS_BUILD_CORE_TOOLS": "OFF",
+                "RTS_BUILD_ZEROHOUR_TOOLS": "OFF",
+                "RTS_BUILD_ZEROHOUR_EXTRAS": "OFF"
+            },
+            "environment": {
+                "PKG_CONFIG_PATH": "",
+                "PKG_CONFIG_LIBDIR": "/nonexistent-host-pkgconfig"
+            }
         }
     ],
     "buildPresets": [

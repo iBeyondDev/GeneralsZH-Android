@@ -40,8 +40,14 @@ if(SAGE_USE_SDL3)
     set(SDL_VIDEO ON CACHE BOOL "Enable video subsystem" FORCE)
     
     # Platform support
-    set(SDL_WAYLAND ON CACHE BOOL "Enable Wayland support (Linux)" FORCE)
-    set(SDL_X11 ON CACHE BOOL "Enable X11 support (Linux)" FORCE)
+    if(ANDROID)
+        # GeneralsX @build android 04/10/2026 Android windowing goes through SDLActivity/ANativeWindow
+        set(SDL_WAYLAND OFF CACHE BOOL "No Wayland on Android" FORCE)
+        set(SDL_X11 OFF CACHE BOOL "No X11 on Android" FORCE)
+    else()
+        set(SDL_WAYLAND ON CACHE BOOL "Enable Wayland support (Linux)" FORCE)
+        set(SDL_X11 ON CACHE BOOL "Enable X11 support (Linux)" FORCE)
+    endif()
     set(SDL_CAMERA OFF CACHE BOOL "Disable camera (unused)" FORCE)
     set(SDL_QSPI OFF CACHE BOOL "Disable QSPI (unused)" FORCE)
     
@@ -51,7 +57,13 @@ if(SAGE_USE_SDL3)
     # Before SDL3_image build: force PNG discovery to platform-specific libpng
     # Linux: System libpng16.so is dynamic shared library
     # macOS: Use Homebrew PNG or system framework
-    if(NOT APPLE)
+    if(ANDROID)
+        # GeneralsX @build android 04/10/2026 Same situation as iOS: no shared libpng
+        # exists for the target and SDL3_image rejects vcpkg's static one. Its bundled
+        # stb backend decodes PNG/JPG; the other formats need system libs Android lacks.
+        set(SDLIMAGE_PNG_LIBPNG OFF CACHE BOOL "No libpng on Android; stb decodes PNG" FORCE)
+        set(SDLIMAGE_PNG_SHARED OFF CACHE BOOL "No shared libpng on Android" FORCE)
+    elseif(NOT APPLE)
         # Find system shared libpng, bypassing vcpkg's static .a.
         # SDL3_image requires a shared .so but vcpkg only provides static libpng16.a.
         # NO_CMAKE_PATH + NO_CMAKE_FIND_ROOT_PATH skips all vcpkg-injected search paths,
@@ -120,7 +132,13 @@ if(SAGE_USE_SDL3)
     set(SDL3IMAGE_WEBP ON CACHE BOOL "Enable WebP support" FORCE)
     set(SDL3IMAGE_AVIF OFF CACHE BOOL "Disable AVIF (optional)" FORCE)
     set(SDL3IMAGE_XCUR ON CACHE BOOL "Enable X cursor support" FORCE)
-    
+    if(ANDROID)
+        set(SDL3IMAGE_TIF OFF CACHE BOOL "No system libtiff on Android" FORCE)
+        set(SDL3IMAGE_WEBP OFF CACHE BOOL "No system libwebp on Android" FORCE)
+        set(SDL3IMAGE_XCUR OFF CACHE BOOL "No X cursors on Android" FORCE)
+        set(SDL3IMAGE_DEPS_SHARED OFF CACHE BOOL "Vendored/stb deps only on Android" FORCE)
+    endif()
+
     FetchContent_MakeAvailable(SDL3_image)
     
     # Create unified interface library for linking

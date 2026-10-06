@@ -1,8 +1,18 @@
-add_executable(z_generals WIN32)
+# GeneralsX @build android 04/10/2026 Android has no executables: SDL's Java
+# activity (SDLActivity) System.loadLibrary()s "libmain.so" and calls SDL_main.
+if(ANDROID)
+    add_library(z_generals SHARED)
+else()
+    add_executable(z_generals WIN32)
+endif()
 
 # Use a binary name that doesn't conflict with original game.
 # GeneralsX @build BenderAI 15/02/2026 Linux branding update
-if("${CMAKE_SYSTEM}" MATCHES "Windows")
+if(ANDROID)
+    set_target_properties(z_generals PROPERTIES OUTPUT_NAME main)
+    # android: logcat (__android_log_*), ANativeWindow
+    target_link_libraries(z_generals PRIVATE log android)
+elseif("${CMAKE_SYSTEM}" MATCHES "Windows")
     set_target_properties(z_generals PROPERTIES OUTPUT_NAME "generalszh${RTS_BUILD_OUTPUT_SUFFIX}")
 else()
     # GeneralsX @build BenderAI 15/02/2026 Linux branding update

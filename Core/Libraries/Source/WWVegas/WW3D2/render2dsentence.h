@@ -50,8 +50,8 @@
     #if defined(__APPLE__)
         #include <TargetConditionals.h>
     #endif
-    // iOS has no fontconfig; fonts resolve from a bundled fonts/ directory instead
-    #if !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+    // iOS/Android have no fontconfig; fonts resolve from a bundled fonts/ directory instead
+    #if !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE) && !defined(__ANDROID__)
         #include <fontconfig/fontconfig.h>
     #endif
 #endif

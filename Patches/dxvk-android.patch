@@ -1,0 +1,301 @@
+diff --git a/src/d3d9/d3d9_fixed_function.cpp b/src/d3d9/d3d9_fixed_function.cpp
+index 436843a3..6f759123 100644
+--- a/src/d3d9/d3d9_fixed_function.cpp
++++ b/src/d3d9/d3d9_fixed_function.cpp
+@@ -16,6 +16,7 @@ namespace dxvk {
+     invariantPosition = options->invariantPosition;
+     forceSampleRateShading = options->forceSampleRateShading;
+     drefScaling = options->drefScaling;
++    clipDistanceSupported = options->clipDistanceSupported;
+   }
+ 
+   uint32_t DoFixedFunctionFog(D3D9ShaderSpecConstantManager& spec, SpirvModule& spvModule, const D3D9FogContext& fogCtx) {
+@@ -1650,7 +1651,8 @@ namespace dxvk {
+     m_specUbo = SetupSpecUBO(m_module, m_bindings);
+ 
+     // VS Caps
+-    m_module.enableCapability(spv::CapabilityClipDistance);
++    if (m_options.clipDistanceSupported)
++      m_module.enableCapability(spv::CapabilityClipDistance);
+ 
+     emitLightTypeDecl();
+     emitBaseBufferDecl();
+@@ -2359,6 +2361,10 @@ namespace dxvk {
+ 
+ 
+   void D3D9FFShaderCompiler::emitVsClipping(uint32_t vtx) {
++    // See DxsoCompiler::emitVsClipping: no gl_ClipDistance without shaderClipDistance
++    if (!m_options.clipDistanceSupported)
++      return;
++
+     uint32_t worldPos = emitMatrixTimesVector(4, 4, m_vs.constants.inverseView, vtx);
+ 
+     uint32_t clipPlaneCountId = m_module.constu32(caps::MaxClipPlanes);
+diff --git a/src/d3d9/d3d9_fixed_function.h b/src/d3d9/d3d9_fixed_function.h
+index 85432ce5..7ac9bc5a 100644
+--- a/src/d3d9/d3d9_fixed_function.h
++++ b/src/d3d9/d3d9_fixed_function.h
+@@ -50,6 +50,7 @@ namespace dxvk {
+     bool    invariantPosition;
+     bool    forceSampleRateShading;
+     int32_t drefScaling;
++    bool    clipDistanceSupported;
+   };
+ 
+   constexpr float GetDrefScaleFactor(int32_t bitDepth) {
+diff --git a/src/d3d9/d3d9_options.cpp b/src/d3d9/d3d9_options.cpp
+index a16a2fc1..ae1634c8 100644
+--- a/src/d3d9/d3d9_options.cpp
++++ b/src/d3d9/d3d9_options.cpp
+@@ -58,6 +58,9 @@ namespace dxvk {
+     this->useD32forD24                  = config.getOption<bool>        ("d3d9.useD32forD24",                  false);
+     this->disableA8RT                   = config.getOption<bool>        ("d3d9.disableA8RT",                   false);
+     this->invariantPosition             = config.getOption<bool>        ("d3d9.invariantPosition",             true);
++    // Mali (Android) lacks shaderClipDistance, and its compiler crashes on shaders that
++    // write gl_ClipDistance anyway. Without the feature, user clip planes are not emitted.
++    this->clipDistanceSupported         = device == nullptr || device->features().core.features.shaderClipDistance;
+     this->memoryTrackTest               = config.getOption<bool>        ("d3d9.memoryTrackTest",               false);
+     this->supportVCache                 = config.getOption<bool>        ("d3d9.supportVCache",                 vendorId == uint32_t(DxvkGpuVendor::Nvidia));
+     this->forceSamplerTypeSpecConstants = config.getOption<bool>        ("d3d9.forceSamplerTypeSpecConstants", false);
+diff --git a/src/d3d9/d3d9_options.h b/src/d3d9/d3d9_options.h
+index 5255cb79..ec2615bc 100644
+--- a/src/d3d9/d3d9_options.h
++++ b/src/d3d9/d3d9_options.h
+@@ -89,6 +89,9 @@ namespace dxvk {
+     /// Fixes flickering/z-fighting in some games.
+     bool invariantPosition;
+ 
++    /// Device supports shaderClipDistance (user clip planes via gl_ClipDistance)
++    bool clipDistanceSupported;
++
+     /// Whether or not to respect memory tracking for
+     /// failing resource allocation.
+     bool memoryTrackTest;
+diff --git a/src/dxso/dxso_compiler.cpp b/src/dxso/dxso_compiler.cpp
+index d4df654d..ee0a6f19 100644
+--- a/src/dxso/dxso_compiler.cpp
++++ b/src/dxso/dxso_compiler.cpp
+@@ -451,7 +451,8 @@ namespace dxvk {
+ 
+ 
+   void DxsoCompiler::emitVsInit() {
+-    m_module.enableCapability(spv::CapabilityClipDistance);
++    if (m_moduleInfo.options.clipDistanceSupported)
++      m_module.enableCapability(spv::CapabilityClipDistance);
+ 
+     // Only VS needs this, because PS has
+     // non-indexable specialized output regs
+@@ -3500,6 +3501,11 @@ void DxsoCompiler::emitControlFlowGenericLoop(
+ 
+ 
+   void DxsoCompiler::emitVsClipping() {
++    // No shaderClipDistance (e.g. Mali): user clip planes cannot be honoured; emitting
++    // gl_ClipDistance anyway crashes those drivers' shader compilers.
++    if (!m_moduleInfo.options.clipDistanceSupported)
++      return;
++
+     uint32_t clipPlaneCountId = m_module.constu32(caps::MaxClipPlanes);
+     
+     uint32_t floatType = m_module.defFloatType(32);
+diff --git a/src/dxso/dxso_options.cpp b/src/dxso/dxso_options.cpp
+index 28400af7..601b4f1d 100644
+--- a/src/dxso/dxso_options.cpp
++++ b/src/dxso/dxso_options.cpp
+@@ -21,6 +21,7 @@ namespace dxvk {
+     d3d9FloatEmulation   = options.d3d9FloatEmulation;
+ 
+     invariantPosition    = options.invariantPosition;
++    clipDistanceSupported = options.clipDistanceSupported;
+ 
+     forceSamplerTypeSpecConstants = options.forceSamplerTypeSpecConstants;
+     forceSampleRateShading = options.forceSampleRateShading;
+diff --git a/src/dxso/dxso_options.h b/src/dxso/dxso_options.h
+index 132b99ac..7570b792 100644
+--- a/src/dxso/dxso_options.h
++++ b/src/dxso/dxso_options.h
+@@ -42,6 +42,9 @@ namespace dxvk {
+     /// Whether or not we can rely on robustness2 to handle oob constant access
+     bool robustness2Supported;
+ 
++    /// Emit user clip planes via gl_ClipDistance (requires shaderClipDistance)
++    bool clipDistanceSupported = true;
++
+     /// Whether runtime to apply Dref scaling for depth textures of specified bit depth
+     /// (24: D24S8, 16: D16, 0: Disabled). This allows compatability with games
+     /// that expect a different depth test range, which was typically a D3D8 quirk on
+diff --git a/src/dxvk/dxvk_adapter.cpp b/src/dxvk/dxvk_adapter.cpp
+index 981b0003..fff2cd44 100644
+--- a/src/dxvk/dxvk_adapter.cpp
++++ b/src/dxvk/dxvk_adapter.cpp
+@@ -2,7 +2,9 @@
+ // (VkPhysicalDevicePortabilitySubsetFeaturesKHR, VK_STRUCTURE_TYPE_*_PORTABILITY_SUBSET_*).
+ // These are guarded by VK_ENABLE_BETA_EXTENSIONS in vulkan_core.h and vulkan_beta.h.
+ // This define MUST appear before any Vulkan header is pulled in.
+-#ifdef __APPLE__
++// Android: the portability-subset path below is compiled unconditionally (it is a
++// no-op on devices that don't expose the extension), so the types must exist there too.
++#if defined(__APPLE__) || defined(__ANDROID__)
+ #define VK_ENABLE_BETA_EXTENSIONS
+ #endif
+ 
+@@ -16,7 +18,7 @@
+ // macOS: VkPhysicalDevicePortabilitySubsetFeaturesKHR lives in vulkan_beta.h.
+ // Included after dxvk headers (which pull in vulkan.h) but VK_ENABLE_BETA_EXTENSIONS
+ // defined above ensures the portability types are active in vulkan_core.h too.
+-#ifdef __APPLE__
++#if defined(__APPLE__) || defined(__ANDROID__)
+ #include <vulkan/vulkan_beta.h>
+ #endif
+ 
+@@ -596,9 +598,57 @@ namespace dxvk {
+       vr = m_vki->vkCreateDevice(m_handle, &info, nullptr, &device);
+     }
+ 
++#if defined(__ANDROID__)
++    // Android: mobile drivers occasionally reject a feature they advertise
++    // (VK_ERROR_FEATURE_NOT_PRESENT). Find the offending optional feature by
++    // retrying with one candidate disabled at a time, and say loudly which one,
++    // so it can be handled properly per driver instead of failing to start.
++    // The pNext chain points into enabledFeatures, so edits apply to `info`.
++    if (vr == VK_ERROR_FEATURE_NOT_PRESENT) {
++      struct Candidate { const char* name; VkBool32* field; };
++      const Candidate candidates[] = {
++        { "robustBufferAccess2",                  &enabledFeatures.extRobustness2.robustBufferAccess2 },
++        { "nullDescriptor",                       &enabledFeatures.extRobustness2.nullDescriptor },
++        { "customBorderColorWithoutFormat",       &enabledFeatures.extCustomBorderColor.customBorderColorWithoutFormat },
++        { "customBorderColors",                   &enabledFeatures.extCustomBorderColor.customBorderColors },
++        { "depthClipEnable",                      &enabledFeatures.extDepthClipEnable.depthClipEnable },
++        { "extDynamicState3DepthClipEnable",      &enabledFeatures.extExtendedDynamicState3.extendedDynamicState3DepthClipEnable },
++        { "extDynamicState3SampleMask",           &enabledFeatures.extExtendedDynamicState3.extendedDynamicState3SampleMask },
++        { "extDynamicState3LineRasterizationMode",&enabledFeatures.extExtendedDynamicState3.extendedDynamicState3LineRasterizationMode },
++        { "graphicsPipelineLibrary",              &enabledFeatures.extGraphicsPipelineLibrary.graphicsPipelineLibrary },
++        { "rectangularLines",                     &enabledFeatures.extLineRasterization.rectangularLines },
++        { "nonSeamlessCubeMap",                   &enabledFeatures.extNonSeamlessCubeMap.nonSeamlessCubeMap },
++        { "swapchainMaintenance1",                &enabledFeatures.extSwapchainMaintenance1.swapchainMaintenance1 },
++        { "presentId",                            &enabledFeatures.khrPresentId.presentId },
++        { "maintenance5",                         &enabledFeatures.khrMaintenance5.maintenance5 },
++        { "wideLines",                            &enabledFeatures.core.features.wideLines },
++        { "sampleRateShading",                    &enabledFeatures.core.features.sampleRateShading },
++        { "geometryShader",                       &enabledFeatures.core.features.geometryShader },
++        { "occlusionQueryPrecise",                &enabledFeatures.core.features.occlusionQueryPrecise },
++        { "multiDrawIndirect",                    &enabledFeatures.core.features.multiDrawIndirect },
++        { "robustImageAccess",                    &enabledFeatures.vk13.robustImageAccess },
++        { "vulkanMemoryModel",                    &enabledFeatures.vk12.vulkanMemoryModel },
++        { "shaderOutputLayer",                    &enabledFeatures.vk12.shaderOutputLayer },
++        { "shaderOutputViewportIndex",            &enabledFeatures.vk12.shaderOutputViewportIndex },
++      };
++      for (const auto& c : candidates) {
++        if (!*c.field)
++          continue;
++        *c.field = VK_FALSE;
++        vr = m_vki->vkCreateDevice(m_handle, &info, nullptr, &device);
++        if (vr == VK_SUCCESS) {
++          Logger::warn(str::format("DxvkAdapter: driver rejected advertised feature '", c.name, "'; continuing without it"));
++          break;
++        }
++        Logger::info(str::format("DxvkAdapter: not '", c.name, "' (", vr, ")"));
++        *c.field = VK_TRUE;
++      }
++    }
++#endif
++
+     if (vr != VK_SUCCESS)
+-      throw DxvkError("DxvkAdapter: Failed to create device");
+-    
++      throw DxvkError(str::format("DxvkAdapter: Failed to create device: ", vr));
++
+     Rc<vk::DeviceFn> vkd = new vk::DeviceFn(m_vki, true, device);
+ 
+     DxvkDeviceQueueSet queues = { };
+diff --git a/src/dxvk/dxvk_graphics.cpp b/src/dxvk/dxvk_graphics.cpp
+index 72ed345f..be7118ae 100644
+--- a/src/dxvk/dxvk_graphics.cpp
++++ b/src/dxvk/dxvk_graphics.cpp
+@@ -1417,6 +1417,16 @@ namespace dxvk {
+     if (key.foState.feedbackLoop & VK_IMAGE_ASPECT_DEPTH_BIT)
+       info.flags |= VK_PIPELINE_CREATE_DEPTH_STENCIL_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT;
+ 
++#if defined(__ANDROID__)
++    // Bring-up aid: mobile shader compilers can crash inside vkCreateGraphicsPipelines.
++    // With DXVK_TRACE_PIPELINES=1 the last line before such a crash names the shaders.
++    static const bool tracePipelines = env::getEnvVar("DXVK_TRACE_PIPELINES") == "1";
++    if (tracePipelines) {
++      Logger::info(str::format("Pipeline compile: vs=", m_shaders.vs ? m_shaders.vs->debugName() : "-",
++        " fs=", m_shaders.fs ? m_shaders.fs->debugName() : "-"));
++    }
++#endif
++
+     VkPipeline pipeline = VK_NULL_HANDLE;
+     VkResult vr = vk->vkCreateGraphicsPipelines(vk->device(), VK_NULL_HANDLE, 1, &info, nullptr, &pipeline);
+ 
+diff --git a/src/dxvk/dxvk_presenter.cpp b/src/dxvk/dxvk_presenter.cpp
+index 38b8a2d6..da36a4fb 100644
+--- a/src/dxvk/dxvk_presenter.cpp
++++ b/src/dxvk/dxvk_presenter.cpp
+@@ -7,6 +7,18 @@
+ 
+ namespace dxvk {
+ 
++  // Android: phones are natively portrait, so a landscape swapchain created with an
++  // identity preTransform reports VK_SUBOPTIMAL_KHR on every acquire/present (the
++  // compositor rotates for us). Recreating can never clear that, it only loops. Treat
++  // suboptimal as usable there; real loss (OUT_OF_DATE, SURFACE_LOST) still recreates.
++  static inline bool isUsableStatus(VkResult vr) {
++#if defined(__ANDROID__)
++    return vr == VK_SUCCESS || vr == VK_SUBOPTIMAL_KHR;
++#else
++    return vr == VK_SUCCESS;
++#endif
++  }
++
+   const std::array<std::pair<VkColorSpaceKHR, VkColorSpaceKHR>, 2> Presenter::s_colorSpaceFallbacks = {{
+     { VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT, VK_COLOR_SPACE_HDR10_ST2084_EXT },
+ 
+@@ -106,13 +118,13 @@ namespace dxvk {
+ 
+     // This is a normal occurence, but may be useful for
+     // debugging purposes in case WSI goes wrong somehow.
+-    if (m_acquireStatus != VK_SUCCESS && m_swapchain)
++    if (!isUsableStatus(m_acquireStatus) && m_swapchain)
+       Logger::info(str::format("Presenter: Got ", m_acquireStatus, ", recreating swapchain"));
+ 
+     // If the swap chain is out of date, recreate it and retry. It
+     // is possible that we do not get a new swap chain here, e.g.
+     // because the window is minimized.
+-    if (m_acquireStatus != VK_SUCCESS || !m_swapchain) {
++    if (!isUsableStatus(m_acquireStatus) || !m_swapchain) {
+       VkResult vr = recreateSwapChain();
+ 
+       if (vr == VK_NOT_READY && hasSwapchain)
+@@ -232,7 +244,7 @@ namespace dxvk {
+ 
+     // On a successful present, try to acquire next image already, in
+     // order to hide potential delays from the application thread.
+-    if (status == VK_SUCCESS) {
++    if (isUsableStatus(status)) {
+       PresenterSync& nextSync = m_semaphores.at(m_frameIndex);
+       waitForSwapchainFence(nextSync);
+ 
+@@ -245,7 +257,7 @@ namespace dxvk {
+     // There is no guarantee that suboptimal state is returned by both functions.
+     std::lock_guard lock(m_surfaceMutex);
+ 
+-    if (status != VK_SUCCESS) {
++    if (!isUsableStatus(status)) {
+       Logger::info(str::format("Presenter: Got ", status, ", recreating swapchain"));
+ 
+       m_dirtySwapchain = true;
+diff --git a/src/wsi/sdl3/wsi_platform_sdl3.cpp b/src/wsi/sdl3/wsi_platform_sdl3.cpp
+index 9975cdac..f3de295a 100644
+--- a/src/wsi/sdl3/wsi_platform_sdl3.cpp
++++ b/src/wsi/sdl3/wsi_platform_sdl3.cpp
+@@ -15,6 +15,9 @@ namespace dxvk::wsi {
+         "SDL3.dll"
+ #elif defined(__APPLE__)
+         "libSDL3.0.dylib"
++#elif defined(__ANDROID__)
++        // APK native libs carry no version suffix; already loaded by SDLActivity
++        "libSDL3.so"
+ #else
+         "libSDL3.so.0"
+ #endif

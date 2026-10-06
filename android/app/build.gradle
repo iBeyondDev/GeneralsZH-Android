@@ -1,0 +1,48 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace = "com.generalsx.zerohour"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.generalsx.zerohour"
+        minSdk 29          // Android 10: Vulkan 1.1+ guaranteed by the platform
+        targetSdk 35
+        versionCode 1
+        versionName "0.1-dev"
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+    }
+
+    buildTypes {
+        debug {
+            // the engine is built separately (CMake); nothing native is compiled here
+            jniDebuggable true
+        }
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.debug   // sideload-only: debug-signed release
+        }
+    }
+
+    sourceSets.main {
+        jniLibs.srcDirs = ['libs']       // staged by package-android-zh.sh
+    }
+
+    packagingOptions {
+        jniLibs {
+            // Extract .so files to the app's lib dir at install time so the engine's
+            // dlopen("libdxvk_d3d8.so") and DXVK's own NEEDED entries resolve by name.
+            useLegacyPackaging = true
+            // libs are pre-stripped by the package script; keep symbols tables as staged
+            keepDebugSymbols += ['**/*.so']
+        }
+    }
+
+    lint {
+        abortOnError = false
+    }
+}

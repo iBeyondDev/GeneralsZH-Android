@@ -1646,7 +1646,7 @@ FontCharsClass::Update_Current_Buffer (int char_width)
 
 #if defined(SAGE_USE_FREETYPE) && !defined(_WIN32)
 
-#if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
+#if (defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE) || defined(__ANDROID__)
 
 #include <cctype>
 #include <cstdio>
@@ -1691,10 +1691,25 @@ FontCharsClass::Locate_Font_FontConfig (const char *font_name)
 		return FreetypeFontPath;
 	}
 
+#if defined(__ANDROID__)
+	// GeneralsX @feature android 04/10/2026 No bundled fonts/ dir: every Android
+	// build ships Roboto (newer) or DroidSans (older) as its system UI face.
+	static const char *systemFonts[] = {
+		"/system/fonts/Roboto-Regular.ttf",
+		"/system/fonts/DroidSans.ttf",
+	};
+	for ( size_t i = 0; i < sizeof(systemFonts) / sizeof(systemFonts[0]); ++i ) {
+		if ( access( systemFonts[i], R_OK ) == 0 ) {
+			FreetypeFontPath = systemFonts[i];
+			return FreetypeFontPath;
+		}
+	}
+#endif
+
 	return nullptr;
 }
 
-#else // !TARGET_OS_IPHONE
+#else // !TARGET_OS_IPHONE && !__ANDROID__
 
 ////////////////////////////////////////////////////////////////////////////////////
 //

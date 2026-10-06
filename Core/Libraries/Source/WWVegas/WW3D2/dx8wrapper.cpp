@@ -882,6 +882,10 @@ bool DX8Wrapper::Create_Device()
 
 	if (FAILED(hr))
 	{
+		fprintf(stderr, "WARNING: CreateDevice failed hr=0x%08x (%ux%u back=%d z=%d windowed=%d)\n",
+			(unsigned)hr, _PresentParameters.BackBufferWidth, _PresentParameters.BackBufferHeight,
+			(int)_PresentParameters.BackBufferFormat, (int)_PresentParameters.AutoDepthStencilFormat,
+			(int)_PresentParameters.Windowed);
 		// The device selection may fail because the device lied that it supports 32 bit zbuffer with 16 bit
 		// display. This happens at least on Voodoo2.
 
@@ -1085,8 +1089,33 @@ void DX8Wrapper::Enumerate_Devices()
 					if (bits != 0) {
 						desc.add_resolution(d3dmode.Width,d3dmode.Height,bits);
 					}
+					fprintf(stderr, "INFO: Enumerate_Devices: adapter %d mode %d: %ux%u fmt=%d -> %s\n",
+						adapter_index, mode_index, d3dmode.Width, d3dmode.Height, (int)d3dmode.Format,
+						bits != 0 ? "kept" : "rejected");
 				}
 			}
+
+#ifndef _WIN32
+			// GeneralsX @bugfix android 04/10/2026 Mobile WSI may report no usable modes (or only
+			// the panel's portrait mode). A device with zero resolutions is dropped below, leaving
+			// the render-device table empty, and every resolution query (Options menu,
+			// W3DDisplay::init) then dereferences index 0 of an empty table. Fall back to the
+			// current display mode, landscape-oriented: a phone has exactly one real mode.
+			if (desc.Enumerate_Resolutions().Count() == 0) {
+				D3DDISPLAYMODE current;
+				::ZeroMemory(&current, sizeof(D3DDISPLAYMODE));
+				if (D3DInterface->GetAdapterDisplayMode(adapter_index, &current) == D3D_OK &&
+					current.Width > 0 && current.Height > 0) {
+					unsigned w = current.Width, h = current.Height;
+					if (h > w) {
+						const unsigned t = w; w = h; h = t;
+					}
+					desc.add_resolution(w, h, 32);
+					fprintf(stderr, "INFO: Enumerate_Devices: adapter %d reported no usable modes; using current display mode %ux%u\n",
+						adapter_index, w, h);
+				}
+			}
+#endif
 
 			// IML: If the device has one or more valid resolutions add it to the device list.
 			// NOTE: Testing has shown that there are drivers with zero resolutions.
@@ -1400,7 +1429,14 @@ bool DX8Wrapper::Set_Render_Device(int dev, int width, int height, int bits, int
 	*/
 	if (_PresentParameters.AutoDepthStencilFormat==D3DFMT_UNKNOWN) {
 		if (BitDepth==32) {
+#ifdef _WIN32
 			_PresentParameters.AutoDepthStencilFormat=D3DFMT_D32;
+#else
+			// GeneralsX @bugfix android 04/10/2026 DXVK maps D3DFMT_D32 to nothing ("unsupported
+			// everywhere"), so this fallback made CreateDevice fail with D3DERR_NOTAVAILABLE.
+			// D24S8 is universally supported by DXVK and gives shadows their stencil.
+			_PresentParameters.AutoDepthStencilFormat=D3DFMT_D24S8;
+#endif
 		}
 		else {
 			_PresentParameters.AutoDepthStencilFormat=D3DFMT_D16;
@@ -1963,6 +1999,7 @@ bool DX8Wrapper::Test_Z_Mode(D3DFORMAT colorbuffer,D3DFORMAT backbuffer, D3DFORM
 		colorbuffer,D3DUSAGE_DEPTHSTENCIL,D3DRTYPE_SURFACE,zmode)))
 	{
 		WWDEBUG_SAY(("CheckDeviceFormat failed.  Colorbuffer format = %d  Zbufferformat = %d",colorbuffer,zmode));
+		fprintf(stderr, "WARNING: Test_Z_Mode: CheckDeviceFormat failed (color=%d z=%d)\n", (int)colorbuffer, (int)zmode);
 		return false;
 	}
 
@@ -1971,6 +2008,7 @@ bool DX8Wrapper::Test_Z_Mode(D3DFORMAT colorbuffer,D3DFORMAT backbuffer, D3DFORM
 		colorbuffer,backbuffer,zmode)))
 	{
 		WWDEBUG_SAY(("CheckDepthStencilMatch failed.  Colorbuffer format = %d  Backbuffer format = %d Zbufferformat = %d",colorbuffer,backbuffer,zmode));
+		fprintf(stderr, "WARNING: Test_Z_Mode: CheckDepthStencilMatch failed (color=%d back=%d z=%d)\n", (int)colorbuffer, (int)backbuffer, (int)zmode);
 		return false;
 	}
 	return true;

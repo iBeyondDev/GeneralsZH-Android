@@ -1,4 +1,6 @@
 #include "thread_compat.h"
+#include <cerrno>
+#include <cstdio>
 #include <map>
 #include <mutex>
 
@@ -58,5 +60,14 @@ void* CreateThread(void *lpSecure, size_t dwStackSize, start_routine lpStartAddr
 
 int TerminateThread(void *hThread, unsigned long dwExitCode)
 {
+#if defined(__ANDROID__)
+	// GeneralsX @bugfix android 04/10/2026 bionic has no pthread_cancel (asynchronous
+	// thread kill is unsupported on Android). Callers only use this as a last resort
+	// after a cooperative stop timed out; report failure with the same convention as
+	// pthread_cancel (non-zero errno) so they treat the thread as still running.
+	fprintf(stderr, "WARNING: TerminateThread unsupported on Android; thread %p left running\n", hThread);
+	return ENOSYS;
+#else
 	return pthread_cancel((pthread_t)hThread);
+#endif
 }

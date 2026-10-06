@@ -34,6 +34,7 @@
 #include "SDL3Device/GameClient/SDL3Keyboard.h"
 #include "GameClient/Mouse.h"
 #include "GameClient/Keyboard.h"
+#include "GameClient/Display.h"
 #include "GameClient/GameWindow.h"
 #include "GameClient/GameWindowManager.h"
 #include "GameClient/Gadget.h"
@@ -57,12 +58,20 @@
 #include <TargetConditionals.h>
 #endif
 
+// GeneralsX @feature android 04/10/2026 Touch-first platforms share the gesture
+// translator and lifecycle render gate below (all pure SDL3, no OS-specific calls).
+#if (defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE) || defined(__ANDROID__)
+#define SAGE_TOUCH_PLATFORM 1
+#else
+#define SAGE_TOUCH_PLATFORM 0
+#endif
+
 // Extern globals for input devices (set by GameClient)
 extern Mouse *TheMouse;
 extern Keyboard *TheKeyboard;
 extern GameWindowManager *TheWindowManager;
 
-#if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
+#if SAGE_TOUCH_PLATFORM
 #include <atomic>
 
 // ---------------------------------------------------------------------------
@@ -367,7 +376,7 @@ void updateTouchLongPress(SDL3Mouse *mouse, SDL_Window *window)
 }
 
 } // anonymous namespace
-#endif // TARGET_OS_IPHONE
+#endif // SAGE_TOUCH_PLATFORM
 
 namespace {
 
@@ -494,7 +503,7 @@ void SDL3GameEngine::init(void)
 	m_IsInitialized = true;
 	m_IsActive = true;
 
-#if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
+#if SAGE_TOUCH_PLATFORM
 	// Lifecycle events can fire outside the poll cycle on iOS; catch them
 	// immediately so rendering halts before the process is suspended.
 	SDL_AddEventWatch(iosLifecycleWatcher, nullptr);
@@ -526,7 +535,7 @@ void SDL3GameEngine::reset(void)
 void SDL3GameEngine::update(void)
 {
 	pollSDL3Events();
-#if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
+#if SAGE_TOUCH_PLATFORM
 	// Pause sim + render while backgrounded OR inactive (see iosLifecycleWatcher).
 	// Acquiring a Metal drawable in these windows fights iOS for the layer and,
 	// across repeated suspend/switcher cycles, crashes MoltenVK. Keep polling so
@@ -617,7 +626,7 @@ void SDL3GameEngine::pollSDL3Events(void)
 				}
 				break;
 
-#if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
+#if SAGE_TOUCH_PLATFORM
 			// App suspension/resume: mirror the desktop focus handling so audio
 			// and mouse state pause cleanly (the render gate lives in update()).
 			case SDL_EVENT_DID_ENTER_BACKGROUND:
@@ -650,6 +659,15 @@ void SDL3GameEngine::pollSDL3Events(void)
 
 			case SDL_EVENT_KEY_DOWN:
 			case SDL_EVENT_KEY_UP:
+#if defined(__ANDROID__)
+				// GeneralsX @feature android 04/10/2026 Android Back (button or gesture) acts as
+				// Escape: skips movies, opens/closes menus. Rewritten here because the keyboard
+				// layer carries scancodes as a byte and AC_BACK (270) does not fit.
+				if (event.key.scancode == SDL_SCANCODE_AC_BACK) {
+					event.key.scancode = SDL_SCANCODE_ESCAPE;
+					event.key.key = SDLK_ESCAPE;
+				}
+#endif
 				// Fighter19 pattern: direct addSDLEvent() call
 				// GeneralsX @refactor felipebraz 16/02/2026 Simplified event routing
 				if (TheKeyboard) {
@@ -668,7 +686,7 @@ void SDL3GameEngine::pollSDL3Events(void)
 			case SDL_EVENT_MOUSE_BUTTON_DOWN:
 			case SDL_EVENT_MOUSE_BUTTON_UP:
 			case SDL_EVENT_MOUSE_WHEEL:
-#if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
+#if SAGE_TOUCH_PLATFORM
 				// Belt-and-braces: drop SDL's own touch-synthesized mouse events.
 				// The gesture translator owns all touch->mouse conversion; double
 				// delivery would produce phantom second clicks.
@@ -686,7 +704,7 @@ void SDL3GameEngine::pollSDL3Events(void)
 				}
 				break;
 
-#if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
+#if SAGE_TOUCH_PLATFORM
 			case SDL_EVENT_FINGER_DOWN:
 			case SDL_EVENT_FINGER_MOTION:
 			case SDL_EVENT_FINGER_UP:
@@ -695,6 +713,25 @@ void SDL3GameEngine::pollSDL3Events(void)
 					SDL3Mouse* mouse = dynamic_cast<SDL3Mouse*>(TheMouse);
 					if (mouse) {
 						handleTouchEvent(mouse, m_SDLWindow, event);
+					}
+				}
+				// GeneralsX @feature android 04/10/2026 Movies (intro, campaign briefings) only
+				// skip on Escape, which a phone does not have: lifting a finger during a movie
+				// sends Escape. The engine itself ignores it until skipping is allowed.
+				if (event.type == SDL_EVENT_FINGER_UP && TheDisplay && TheDisplay->isMoviePlaying() && TheKeyboard) {
+					SDL3Keyboard* keyboard = dynamic_cast<SDL3Keyboard*>(TheKeyboard);
+					if (keyboard) {
+						SDL_Event esc;
+						SDL_zero(esc);
+						esc.key.windowID = SDL_GetWindowID(m_SDLWindow);
+						esc.key.scancode = SDL_SCANCODE_ESCAPE;
+						esc.key.key = SDLK_ESCAPE;
+						esc.type = SDL_EVENT_KEY_DOWN;
+						esc.key.down = true;
+						keyboard->addSDLEvent(&esc);
+						esc.type = SDL_EVENT_KEY_UP;
+						esc.key.down = false;
+						keyboard->addSDLEvent(&esc);
 					}
 				}
 				break;
@@ -712,7 +749,7 @@ void SDL3GameEngine::pollSDL3Events(void)
 		updateTextInputState();
 	}
 
-#if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
+#if SAGE_TOUCH_PLATFORM
 	// Poll the long-press timer every frame; a stationary finger emits no events.
 	if (TheMouse && m_SDLWindow) {
 		SDL3Mouse* touchMouse = dynamic_cast<SDL3Mouse*>(TheMouse);

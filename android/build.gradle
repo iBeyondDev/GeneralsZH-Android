@@ -1,0 +1,19 @@
+// Android shell for the native Zero Hour port. The game itself is built by CMake
+// (preset android-arm64); scripts/build/android/package-android-zh.sh stages the
+// .so files into app/libs/arm64-v8a and runs this project.
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.7.3'
+    }
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}

@@ -598,6 +598,13 @@ static bool s_filteredDirty = true;
 static void buildFilteredResolutions()
 {
 	s_filteredResolutions.clear();
+	// GeneralsX @bugfix android 04/10/2026 Never index an empty render-device table
+	// (crashed the Options menu when the adapter reported no display modes).
+	if (WW3D::Get_Render_Device_Count() <= 0) {
+		fprintf(stderr, "WARNING: buildFilteredResolutions: no render devices enumerated\n");
+		s_filteredDirty = false;
+		return;
+	}
 	const RenderDeviceDescClass &devDesc = WW3D::Get_Render_Device_Desc(0);
 	const DynamicVectorClass<ResolutionDescClass> &resolutions = devDesc.Enumerate_Resolutions();
 
@@ -614,7 +621,11 @@ static void buildFilteredResolutions()
 		Int minW = h * 4 / 3;
 		Int maxW = h * 16 / 9;
 		if (w < minW) w = minW;
+#if !defined(__ANDROID__)
+		// GeneralsX @tweak android 04/10/2026 Phones are ~19.5:9; clamping to 16:9 would list
+		// 1920x1080 for a 2340x1080 panel and pillarbox the game if the player accepts it.
 		if (w > maxW) w = maxW;
+#endif
 		bool duplicate = false;
 		for (const auto& e : s_filteredResolutions) {
 			if (e.w == w && e.h == h && e.bits == bits) { duplicate = true; break; }

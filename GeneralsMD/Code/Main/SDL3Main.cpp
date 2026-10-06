@@ -44,12 +44,30 @@
 #include <filesystem>
 #include <string>
 #endif
+#if defined(__ANDROID__)
+// GeneralsX @feature android 04/10/2026 SDLActivity System.loadLibrary()s libmain.so and
+// calls SDL_main; SDL_main.h renames main() below to that exported entry point.
+#include <SDL3/SDL_main.h>
+#include <SDL3/SDL_system.h>
+#include <android/log.h>
+#include <pthread.h>
+#include <sys/stat.h>
+#include <string>
+#endif
 #include <cstdlib>
 #include <cctype>
 #include <cstring>
 #include <cstdio>
 #include <unistd.h>   // _exit()
 #include <glob.h>     // glob() for Vulkan ICD discovery
+
+// GeneralsX @feature android 04/10/2026 Touch-first platforms (fullscreen, native
+// resolution, gesture translator owns touch->mouse). Mirrors SDL3GameEngine.cpp.
+#if (defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE) || defined(__ANDROID__)
+#define SAGE_TOUCH_PLATFORM 1
+#else
+#define SAGE_TOUCH_PLATFORM 0
+#endif
 
 // USER INCLUDES (match WinMain.cpp pattern)
 #include "Lib/BaseType.h"
@@ -198,7 +216,9 @@ static void FilterSoftwareVulkanICDs()
 static void FilterPipeWireOpenAL()
 {
 	// GeneralsX @bugfix Copilot 24/03/2026 PipeWire/OpenAL workaround is Linux-only; keep macOS CoreAudio backend selection untouched.
-	#if defined(__linux__)
+	// GeneralsX @bugfix android 04/10/2026 Android defines __linux__ too, but must keep
+	// openal-soft's AAudio/OpenSL backends and NEON mixers — desktop-Linux workaround only.
+	#if defined(__linux__) && !defined(__ANDROID__)
 	// Crash: alcOpenDevice() hits 'movaps %xmm1,0x26260(%rbx)' — SSE movaps requires
 	// 16-byte alignment; a misaligned ALCdevice struct faults regardless of backend.
 	// Disabling CPU extensions forces openal-soft to use scalar code that has no
@@ -219,6 +239,167 @@ static void FilterPipeWireOpenAL()
 	fprintf(stderr, "INFO: OpenAL: keeping default driver selection on non-Linux platform\n");
 	#endif
 }
+
+#if defined(__ANDROID__)
+// ---------------------------------------------------------------------------
+// Android bootstrap
+// GeneralsX @feature android 04/10/2026
+// ---------------------------------------------------------------------------
+
+// stdout/stderr of an Android app go to /dev/null. The engine, DXVK and OpenAL
+// all log through stdio, so pipe both into logcat (tag "GeneralsZH"); severity
+// is inferred from the usual prefixes so `adb logcat *:W` shows only problems.
+static int s_androidLogPipe[2] = { -1, -1 };
+
+static android_LogPriority AndroidLogPriorityFor(const char *line)
+{
+	if (strncmp(line, "FATAL", 5) == 0 || strncmp(line, "ERROR", 5) == 0 || strncmp(line, "err:", 4) == 0) {
+		return ANDROID_LOG_ERROR;
+	}
+	if (strncmp(line, "WARNING", 7) == 0 || strncmp(line, "warn:", 5) == 0) {
+		return ANDROID_LOG_WARN;
+	}
+	return ANDROID_LOG_INFO;
+}
+
+static void *AndroidLogPump(void *)
+{
+	char buf[2048];
+	size_t used = 0;
+	for (;;) {
+		const ssize_t n = read(s_androidLogPipe[0], buf + used, sizeof(buf) - 1 - used);
+		if (n <= 0) {
+			break;
+		}
+		used += (size_t)n;
+		size_t start = 0;
+		for (size_t i = 0; i < used; ++i) {
+			if (buf[i] == '\n') {
+				buf[i] = '\0';
+				__android_log_write(AndroidLogPriorityFor(buf + start), "GeneralsZH", buf + start);
+				start = i + 1;
+			}
+		}
+		if (start == 0 && used == sizeof(buf) - 1) {
+			// overlong line without a newline: flush it as-is
+			buf[used] = '\0';
+			__android_log_write(AndroidLogPriorityFor(buf), "GeneralsZH", buf);
+			used = 0;
+		} else {
+			memmove(buf, buf + start, used - start);
+			used -= start;
+		}
+	}
+	return nullptr;
+}
+
+static void AndroidRedirectStdioToLogcat()
+{
+	setvbuf(stdout, nullptr, _IOLBF, 0);
+	setvbuf(stderr, nullptr, _IOLBF, 0);
+	if (pipe(s_androidLogPipe) != 0) {
+		return;
+	}
+	dup2(s_androidLogPipe[1], STDOUT_FILENO);
+	dup2(s_androidLogPipe[1], STDERR_FILENO);
+	pthread_t thread;
+	if (pthread_create(&thread, nullptr, AndroidLogPump, nullptr) == 0) {
+		pthread_detach(thread);
+	}
+}
+
+// Storage layout:
+//   game assets (user-copied, ~2.7 GB) -> <external app dir>/GameData
+//       = /storage/emulated/0/Android/data/<package>/files/GameData, reachable over
+//         USB/MTP and `adb push` without any storage permission.
+//   saves + Options.ini -> <internal app dir>/share/GeneralsX/... (via XDG_DATA_HOME)
+//   DXVK pipeline cache -> app cache dir (purgeable)
+// Returns false (after telling the user) when the game files are missing.
+static bool AndroidSetupStorage()
+{
+	const char *internalDir = SDL_GetAndroidInternalStoragePath();
+	const char *externalDir = SDL_GetAndroidExternalStoragePath();
+	const char *cacheDir = SDL_GetAndroidCachePath();
+
+	if (internalDir != nullptr) {
+		setenv("HOME", internalDir, 1);
+		const std::string share = std::string(internalDir) + "/share";
+		mkdir(share.c_str(), 0755);
+		setenv("XDG_DATA_HOME", share.c_str(), 1);
+		fprintf(stderr, "INFO: Android user data root: %s\n", share.c_str());
+	}
+	if (cacheDir != nullptr) {
+		setenv("DXVK_STATE_CACHE_PATH", cacheDir, 0);
+	}
+	if (externalDir == nullptr) {
+		fprintf(stderr, "FATAL: Android external storage unavailable: %s\n", SDL_GetError());
+		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Generals Zero Hour",
+			"External app storage is not available on this device.", nullptr);
+		return false;
+	}
+
+	// Candidate asset folders, first readable one wins:
+	//  1. /storage/emulated/0/GeneralsZH — phone storage root, easy to fill from a PC over
+	//     USB; needs All-files access (requested by GeneralsActivity).
+	//  2. the app's own external dir — files there are only readable if the app itself
+	//     created them (files pushed by adb/MTP carry another owner's SELinux categories).
+	// INIZH.big sits in the root of every retail/Steam Zero Hour install.
+	const std::string sharedData = "/storage/emulated/0/GeneralsZH";
+	const std::string appData = std::string(externalDir) + "/GameData";
+	std::string gameData;
+	for (const std::string &candidate : { sharedData, appData }) {
+		const std::string marker = candidate + "/INIZH.big";
+		if (access(marker.c_str(), R_OK) == 0) {
+			gameData = candidate;
+			break;
+		}
+		fprintf(stderr, "INFO: no readable game data at %s (%s)\n", candidate.c_str(), strerror(errno));
+	}
+	if (gameData.empty()) {
+		// Create the shared folder so it shows up when the phone is plugged into a PC.
+		mkdir(sharedData.c_str(), 0775);
+		fprintf(stderr, "FATAL: Zero Hour game files not found\n");
+		const std::string msg =
+			"Game files not found.\n\n"
+			"1. Allow \"All files access\" for Generals ZH in Android Settings.\n"
+			"2. Copy the contents of your Steam \"Command & Conquer Generals - Zero Hour\" "
+			"folder (including ZH_Generals) into the phone folder:\n\n" + sharedData +
+			"\n\nthen start the game again.";
+		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Generals Zero Hour", msg.c_str(), nullptr);
+		return false;
+	}
+
+	if (chdir(gameData.c_str()) != 0) {
+		fprintf(stderr, "FATAL: chdir(%s) failed: %s\n", gameData.c_str(), strerror(errno));
+		return false;
+	}
+	// StdBIGFileSystem's highest-priority asset source; ZH_Generals/ is found beneath it.
+	setenv("CNC_GENERALS_ZH_PATH", gameData.c_str(), 1);
+
+	// First run only: seed Options.ini with full detail. The 2003 GPU auto-detect does not
+	// know mobile GPUs and drops to Low (StaticGameLOD=Low, bilinear filtering). Never
+	// touches an existing file, so the player's own choices win afterwards.
+	if (const char *xdg = getenv("XDG_DATA_HOME")) {
+		const std::string userDir = std::string(xdg) + "/GeneralsX/GeneralsZH";
+		const std::string optionsPath = userDir + "/Options.ini";
+		if (access(optionsPath.c_str(), F_OK) != 0) {
+			mkdir((std::string(xdg) + "/GeneralsX").c_str(), 0755);
+			mkdir(userDir.c_str(), 0755);
+			if (FILE *f = fopen(optionsPath.c_str(), "w")) {
+				fputs("IdealStaticGameLOD = High\n"
+				      "StaticGameLOD = High\n"
+				      "TextureReduction = 0\n"
+				      "TextureFilter = Trilinear\n"
+				      "AnisotropyLevel = 16\n", f);
+				fclose(f);
+				fprintf(stderr, "INFO: Seeded first-run Options.ini (High detail)\n");
+			}
+		}
+	}
+	fprintf(stderr, "INFO: Android game data directory: %s\n", gameData.c_str());
+	return true;
+}
+#endif // __ANDROID__
 
 /**
  * CreateGameEngine
@@ -253,6 +434,41 @@ int main(int argc, char* argv[])
 	// Store command line arguments in globals for CommandLine.cpp parser
 	__argc = argc;
 	__argv = argv;
+
+#if defined(__ANDROID__)
+	AndroidRedirectStdioToLogcat();
+	// DXVK info-level output (adapter/feature/extension lists) is essential while
+	// bringing up mobile Vulkan drivers. Drop to "warn" once devices are known-good.
+	setenv("DXVK_LOG_LEVEL", "info", 0);
+	// Mali shader-compiler bring-up: name the shaders of each pipeline before the driver
+	// compiles it, and dump their SPIR-V to the app cache dir for offline inspection.
+	setenv("DXVK_TRACE_PIPELINES", "1", 0);
+	if (const char *cacheDir = SDL_GetAndroidCachePath()) {
+		static std::string dumpDir;
+		dumpDir = std::string(cacheDir) + "/dxvk-shaders";
+		mkdir(dumpDir.c_str(), 0755);
+		setenv("DXVK_SHADER_DUMP_PATH", dumpDir.c_str(), 0);
+	}
+	if (!AndroidSetupStorage()) {
+		return 1;
+	}
+	// GeneralsX @bugfix android 04/10/2026 Run the engine in "windowed" D3D mode: the
+	// SDL window is already fullscreen on a phone, and the exclusive-fullscreen path
+	// searches DXVK's display-mode list for the exact landscape size (absent on
+	// Android), then falls back to an unsupported depth format and CreateDevice fails.
+	{
+		static char winFlag[] = "-win";
+		static char *androidArgv[64];
+		int n = 0;
+		for (int i = 0; i < __argc && n < 62; ++i) {
+			androidArgv[n++] = __argv[i];
+		}
+		androidArgv[n++] = winFlag;
+		androidArgv[n] = nullptr;
+		__argv = androidArgv;
+		__argc = n;
+	}
+#endif
 
 #if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
 	// Diagnostic capture: an icon-launched app's stderr goes nowhere we can read,
@@ -466,7 +682,7 @@ int main(int argc, char* argv[])
 		// This prevents LLVM SIGSEGV crash during Vulkan driver enumeration
 		// Must be done here, not in SDL3GameEngine::init() which is too late
 		fprintf(stderr, "INFO: Initializing SDL3 video subsystem...\n");
-#if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
+#if SAGE_TOUCH_PLATFORM
 		// All mouse events are synthesized by the gesture translator in
 		// SDL3GameEngine.cpp; SDL's automatic touch->mouse synthesis would
 		// double-deliver finger 1 and fight the two-finger pan logic.
@@ -495,8 +711,16 @@ int main(int argc, char* argv[])
 
 		// Create SDL3 window with Vulkan support
 		fprintf(stderr, "INFO: Creating SDL3 Vulkan window...\n");
+#if defined(__ANDROID__)
+		// GeneralsX @bugfix android 04/10/2026 A resizable 1024x768 window makes SDL
+		// request a sensor orientation, so the phone rotated to portrait mid-startup and
+		// D3D came up at 1080x2340. Pin landscape and use a fixed fullscreen window.
+		SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+		Uint32 windowFlags = SDL_WINDOW_VULKAN | SDL_WINDOW_FULLSCREEN | SDL_WINDOW_HIDDEN;
+#else
 		Uint32 windowFlags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN;  // Start hidden, show after D3D init
-#if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
+#endif
+#if SAGE_TOUCH_PLATFORM
 		// Request a native-resolution Metal drawable (e.g. 2868x1320 instead of the
 		// 956x440 point size). Without this the swapchain renders at point size and
 		// the display upscales 3x, visibly blurring textures and terrain.
@@ -518,7 +742,7 @@ int main(int argc, char* argv[])
 		ApplicationHWnd = (HWND)TheSDL3Window;
 		fprintf(stderr, "INFO: SDL3 window created successfully\n");
 
-#if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
+#if SAGE_TOUCH_PLATFORM
 		// Match the game's internal resolution to the phone screen's aspect ratio.
 		// Without this the engine runs its 4:3 default inside the 19.5:9 display:
 		// pillarboxed picture and a skewed window->game coordinate mapping. Height
