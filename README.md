@@ -1,3 +1,72 @@
+# Command & Conquer Generals: Zero Hour — on Android
+
+<img src="docs/android/main-menu.jpg" alt="Zero Hour's main menu running on an Android phone" width="700" />
+
+**Zero Hour running natively on an Android phone.** No emulator, no Winlator: this is the
+real 2003 engine compiled for ARM64 (`arm64-v8a`), rendering DirectX 8 →
+[DXVK](https://github.com/doitsujin/dxvk) → Vulkan, straight on the phone's GPU.
+
+Made by [iBeyond](https://youtube.com/@iBeyond_dev). This is a fork of
+[ammaarreshi/Generals-Mac-iOS-iPad](https://github.com/ammaarreshi/Generals-Mac-iOS-iPad);
+the Android work sits on top of its iOS port and the community projects credited below.
+
+**No game files are included.** You need your own copy of Zero Hour
+([Steam](https://store.steampowered.com/app/2732960/)).
+
+## Status: work in progress
+
+| Milestone | |
+|---|---|
+| 1. Engine, DXVK, SDL3, OpenAL compile for Android arm64 | ✅ |
+| 2. APK installs and launches | ✅ |
+| 3. Main menu renders (animated background, ~30 fps on a Snapdragon phone) | ✅ |
+| 4. Skirmish playable with touch controls | 🔜 next |
+| 5. Campaign, Generals Challenge, polished touch controls | ⏳ |
+
+<img src="docs/android/loading.jpg" alt="Loading screen" width="345" /> <img src="docs/android/lan-lobby.jpg" alt="LAN lobby screen" width="345" />
+
+## Try it
+
+You'll want a recent phone: **Android 10+, Vulkan, 8 GB RAM or more** (Snapdragon / Adreno
+works best; Mali and PowerVR GPUs may show glitches).
+
+1. Download the APK from [Releases](../../releases) and install it (allow installs from unknown sources).
+2. Copy your Zero Hour game folder from your PC to the phone at **`/sdcard/GeneralsZH`**
+   (Steam: right-click Zero Hour → Manage → Browse local files). You can skip the
+   `.exe`/`.dll` files and the `Manuals`, `MSS`, `RedistInstallers` and `_CommonRedist` folders.
+3. Open the app and allow **"All files access"** when asked, so it can read that folder.
+
+It currently gets to the menus. Skirmish is the next milestone, so expect bugs.
+
+## Building from source
+
+The Android build runs on Linux (WSL works) with the Android NDK, CMake and Gradle:
+
+- `scripts/build/android/build-android-zh.sh`: cross-compiles the engine, DXVK, SDL3 and OpenAL for arm64
+- `scripts/build/android/package-android-zh.sh`: strips the libraries and builds the APK with Gradle
+- `android/`: the Gradle app shell (SDL3 activity, storage permission, LAN multicast)
+- `Patches/dxvk-android.patch`: the changes DXVK needs to run on Android
+
+Both scripts read toolchain paths from `~/android/env.sh` (`ANDROID_NDK_HOME` and friends).
+Proper setup docs are coming.
+
+## Credits
+
+Built on EA's GPL v3 source release (Feb 2025) and a chain of community work:
+[TheSuperHackers](https://github.com/TheSuperHackers/GeneralsGameCode),
+[Fighter19's Unix port](https://github.com/Fighter19/CnC_Generals_Zero_Hour),
+[fbraz3/GeneralsX](https://github.com/fbraz3/GeneralsX), and
+[ammaarreshi's macOS/iOS port](https://github.com/ammaarreshi/Generals-Mac-iOS-iPad), whose
+touch controls and porting playbook this Android port builds on. Engineering done with
+[Claude Code](https://claude.com/claude-code).
+
+Licensed under GPL v3, like the engine it's built on. Command & Conquer and Generals are
+trademarks of Electronic Arts; this project is not affiliated with or endorsed by EA.
+
+---
+
+*Below is the README of the iOS/macOS port this fork is based on.*
+
 # Command & Conquer Generals: Zero Hour — macOS, iOS & iPadOS
 
 <img width="500" height="281" alt="IMG_3457_500" src="https://github.com/user-attachments/assets/aeaf6692-36e6-40c8-b9f8-8066d014ec4b" />
